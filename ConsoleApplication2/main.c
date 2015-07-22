@@ -9,7 +9,6 @@
 typedef struct _Node { // struct Node
 	int blkNumber;
 	int pageCnt;
-	int validCnt;
 
 	struct _Node *prev;
 	struct _Node *next;
@@ -62,7 +61,6 @@ void add_list_tail(List *L, int newblk) { // list의 tail에 item 삽입(queue 연산)
 	
 	N->blkNumber = newblk;
 	N->pageCnt = 0;
-	N->validCnt = 0;
 	N->next = NULL;
 
 	if(L->cnt == 0) {
@@ -143,45 +141,6 @@ Node *remove_node(List *L, Node *N) { // list의 원하는 node를 삭제
 	}
 }
 
-Node *delete_item_with_validCnt(List *L, int item) { // list의 원하는 item을 삭제.
-	Node *tmp;
-
-	for(tmp = L->head; tmp != NULL; tmp = tmp->next) {
-		if(tmp->validCnt == item) {
-			if(tmp == L->head && tmp == L->tail) { // 이 경우는 head=tail, 즉 1개의 item이 있는 경우. 
-				L->head = L->tail = NULL;
-				L->cnt--;
-				return tmp;
-			}
-			else if(tmp == L->head) {
-				// 지울 node가 head인 경우.
-				tmp->next->prev = NULL;
-				L->head = tmp->next;
-				tmp->next = NULL;
-				L->cnt--;
-				return tmp;
-			}
-			else if(tmp == L->tail) { // tail인 경우.
-				tmp->prev->next = NULL;
-				L->tail = tmp->prev;
-				tmp->prev = NULL;
-				L->cnt--;
-				return tmp;
-			}
-			else { // head도, tail도 아닌 경우
-				tmp->prev->next = tmp->next;
-				tmp->next->prev = tmp->prev;
-
-				tmp->prev = tmp->next = NULL;
-				L->cnt--;
-				return tmp;
-			}
-		}
-	}
-	return NULL;
-}
-
-
 //
 // End List
 //
@@ -200,26 +159,46 @@ Node *delete_item_with_validCnt(List *L, int item) { // list의 원하는 item을 삭�
 // unfreeblock 중에서 valid page의 갯수가 가장 적은 block들을 찾아서 victim block으로 선정한 후,
 // free block에 victim block의 valid page들을 복사하고, victim block들은 다시 free block이 되어 write 할 수 있게 된다.
 
-
 void GarbageCollection() { 
 	int i;
+	int tempValidCnt;
+	int victimValidCnt = 0;
 	printf("Garbage Collection request\n");
+	scanf("%d", &i);
 	
 	while(freeBlkList->cnt < 40) { // free block이 40개가 될 때까지 Garbage Collection 수행.
 		Node *N = unfreeBlkList->head;
 		Node *victim = N;
 
-		// victim이 될 block을 찾는다.
-		while(N != NULL) {
-			if(N->validCnt < victim->validCnt) {
-				victim = N;
+		// victimValidCnt 초기화. 처음엔 victim을 head로 설정해 줌.
+		for(i = 0; i < 1024; i++) {
+			if(P2L[i] != -1) {
+				if(L2P[P2L[i]] == i) {
+					victimValidCnt++;
+				}
 			}
-			N = N->next;
+		}
+
+		// victim이 될 block을 찾는다.
+		for(N = unfreeBlkList->head; N != NULL; N = N->next) {
+			tempValidCnt = 0;
+			for(i = N->blkNumber*1024; i < N->blkNumber*1024 + 1024; i++) { // 전체 unfree block을 다 돌면서, valid page 갯수를 센다.
+				if(P2L[i] != -1) {
+					if(L2P[P2L[i]] == i) {
+						tempValidCnt++;
+					}
+				}
+			}
+
+			if(tempValidCnt < victimValidCnt ) { // 만약 현재 victim의 validCnt보다 validCnt가 작은 block이 나타나면, 그 block이 victim이 된다.
+				victim = N;
+				victimValidCnt = tempValidCnt;
+			}
 		}
 		
-		printf("[G.C.] Victim block is (superBlock %d), and the number of valid page is %d\n", victim->blkNumber, victim->validCnt);
+		printf("[G.C.] Victim block is (superBlock %d), and the number of valid page is %d\n", victim->blkNumber, victimValidCnt);
 
-		if(victim->validCnt > 0) { // 모든 page가 invalid인 경우 바로 free block으로 넘어가야 함.
+		if(victimValidCnt > 0) { // 모든 page가 invalid인 경우 바로 free block으로 넘어가야 함.
 			for(i = 1024*(victim->blkNumber); i < 1024+1024*(victim->blkNumber); i++) { // victim block의 페이지 전체를 다 돌면서 맵핑을 옮겨줌.
 				if(openBlk->pageCnt == 1024) { // block이 꽉 차면 다음 블락으로 넘어감.
 					add_list_tail_node(unfreeBlkList, openBlk);
@@ -240,7 +219,6 @@ void GarbageCollection() {
 						L2P[P2L[i]] = 1024*openBlk->blkNumber + openBlk->pageCnt;
 						P2L[1024*openBlk->blkNumber + openBlk->pageCnt] = P2L[i];
 						openBlk->pageCnt++;
-						openBlk->validCnt++;
 					}
 				}
 			}
@@ -248,7 +226,6 @@ void GarbageCollection() {
 	
 		//mapping을 다 옮겼으므로 다시 free block list에 넣어줌.
 		victim->pageCnt = 0;
-		victim->validCnt = 0;
 		remove_node(unfreeBlkList, victim); // unfree block list에서 빼줌
 		add_list_tail_node(freeBlkList, victim); // 다시 free block list로 넣어줌.
 
@@ -280,10 +257,8 @@ void Erase(int startAddr, int endAddr) {
 					P2L[i] = -1;
 				}
 			}
-			openBlk->validCnt--;
 		}
 		else { // L2P 맵핑이 있는 경우는 open block이 아닌 다른 블락에서 L2P가 valid라는 뜻.
-			find_node_with_blkNum(unfreeBlkList, L2P[mapsAddr]/1024)->validCnt--;
 			L2P[mapsAddr] = 0xFFFFFFFF;
 		}
 		printf("[ERASE] Now L2P[%d] is invalid\n\n", mapsAddr);
@@ -298,10 +273,8 @@ void Erase(int startAddr, int endAddr) {
 						P2L[i] = -1;
 					}
 				}
-				openBlk->validCnt--;
 			}
 			else { // L2P 맵핑이 있는 경우는 open block이 아닌 다른 블락에서 L2P가 valid라는 뜻.
-				find_node_with_blkNum(unfreeBlkList, L2P[mapsAddr]/1024)->validCnt--;
 				L2P[mapsAddr] = 0xFFFFFFFF;
 			}
 				printf("[ERASE] Now L2P[%d] is invalid\n", i);
@@ -398,8 +371,6 @@ void Write(int startAddr, int chunk) {
 			if(L2P[mapAddr] != 0xFFFFFFFF) { // 기존 mapping이 있는 경우 read-back.
 				printf("[WRITE] Read-back\n");
 				Read(startAddr, pageSize);
-
-				find_node_with_blkNum(unfreeBlkList, L2P[mapAddr]/1024)->validCnt--; // validCnt--;
 			}
 			
 			P2L[openBlk->pageCnt + 1024*openBlk->blkNumber] = mapAddr;
@@ -411,7 +382,6 @@ void Write(int startAddr, int chunk) {
 			}
 
 			openBlk->pageCnt++;
-			openBlk->validCnt++;
 
 			if(openBlk->pageCnt == 1024) { // openBlk이 꽉 찬경우.
 				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // 블럭을 다 돌면서 L2P를 써줌
@@ -425,7 +395,7 @@ void Write(int startAddr, int chunk) {
 				add_list_tail_node(unfreeBlkList, openBlk);
 				openBlk = remove_head(freeBlkList);
 
-				if(freeBlkList->cnt <= 20) // free block의 수가 20개 이하면 garbage collection.
+				if(freeBlkList->cnt < 20) // free block의 수가 20개 미만이면 garbage collection.
 					GarbageCollection();
 			}
 		}
@@ -439,19 +409,17 @@ void Write(int startAddr, int chunk) {
 						printf("[WRITE] Read-back\n");
 						Read(startAddr+cnt*pageSize, pageSize);
 					}
-					find_node_with_blkNum(unfreeBlkList, L2P[mapAddr]/1024)->validCnt--; // invalid가 늘어나므로 --해줌.
 				}
 
 				P2L[openBlk->pageCnt + 1024*openBlk->blkNumber] = mapAddr;
 				
 				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + openBlk->pageCnt; i++) { // open block에서 중복이 생기면 L2P가 invalid한 상태로 겹칠 수가 있음.
 					if(P2L[i] == P2L[openBlk->pageCnt + 1024*openBlk->blkNumber]) {
-						P2L[i] = -1; // 그런 경우 기존의 P2L을 invalid로 만들어 줘야 read에서 중복이 생기지 않음.
+						P2L[i] = -1; // 그런 경우 기존의 P2L을 invalid로8 만들어 줘야 read에서 중복이 생기지 않음.
 					}
 				}
 
 				openBlk->pageCnt++;
-				openBlk->validCnt++;
 				mapAddr++;
 				chunkNumber--;
 				cnt++;
@@ -468,7 +436,7 @@ void Write(int startAddr, int chunk) {
 					add_list_tail_node(unfreeBlkList, openBlk);
 					openBlk = remove_head(freeBlkList);
 
-					if(freeBlkList->cnt <= 20) // free block이 20개 이하인 경우 garbage collection.
+					if(freeBlkList->cnt < 20) // free block이 20개 미만인 경우 garbage collection.
 						GarbageCollection();
 				}
 			}
@@ -478,9 +446,6 @@ void Write(int startAddr, int chunk) {
 		printf("[WRITE] Read-back\n");
 
 		Read(mapAddr*pageSize, pageSize); // read-back
-		if(L2P[mapAddr] != 0xFFFFFFFF) {
-			find_node_with_blkNum(unfreeBlkList, L2P[mapAddr]/1024)->validCnt--;
-		}
 
 		if(mapAddr == (startAddr+chunk)/pageSize) { // 한 페이지만 쓸 경우, 그냥 read-back 후 write.
 			P2L[openBlk->pageCnt + 1024*openBlk->blkNumber] = mapAddr;
@@ -492,7 +457,6 @@ void Write(int startAddr, int chunk) {
 			}
 
 			openBlk->pageCnt++;
-			openBlk->validCnt++;
 
 			if(openBlk->pageCnt == 1024) { // openBlk이 꽉 찬경우.
 				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // 블럭을 다 돌면서 L2P를 써줌
@@ -502,7 +466,7 @@ void Write(int startAddr, int chunk) {
 					}
 				}
 				add_list_tail_node(unfreeBlkList, openBlk);
-				if(freeBlkList->cnt <= 20) // free block의 수가 20개 이하면 garbage collection.
+				if(freeBlkList->cnt < 20) // free block의 수가 20개 미만이면 garbage collection.
 					GarbageCollection();
 			}
 		}
@@ -515,7 +479,6 @@ void Write(int startAddr, int chunk) {
 						printf("[WRITE] Read-back\n");
 						Read(mapAddr*pageSize, pageSize);
 					}
-					find_node_with_blkNum(unfreeBlkList, L2P[mapAddr]/1024)->validCnt--;
 				}
 
 				P2L[openBlk->pageCnt + 1024*openBlk->blkNumber] = mapAddr;
@@ -527,7 +490,6 @@ void Write(int startAddr, int chunk) {
 				}
 
 				openBlk->pageCnt++;
-				openBlk->validCnt++;
 				mapAddr++;
 				chunkNumber--;
 
@@ -543,8 +505,8 @@ void Write(int startAddr, int chunk) {
 					add_list_tail_node(unfreeBlkList, openBlk);
 					openBlk = remove_head(freeBlkList);
 
-					// free block의 수가 20개 이하이면 garbage collection.
-					if(freeBlkList->cnt <= 20)
+					// free block의 수가 20개 미만이면 garbage collection.
+					if(freeBlkList->cnt < 20)
 						GarbageCollection();
 				}
 			}
@@ -572,7 +534,8 @@ int main() {
 	//
 
 	Write(0, pageSize*1024*2048);
-	Write(0, pageSize*1024*30);
+	Write(pageSize*1024*18, pageSize*1024*30);
+	
 
 	
 	tmp = freeBlkList -> head;
@@ -584,19 +547,4 @@ int main() {
 	return 0;
 }
 
-// 어떻게하면 validCnt를 안 쓰고 할지 생각하기.. 왜냐면 openBlk만 건드릴 수 있는데 다른 블락의 validCnt를 빼는 건 좀 논리에 안 맞음.
-// validCnt가 다른 데는 필요없는데 G.C.를 할 때 victim block을 정하는 데만 필요함. 거길 어떻게 할 것인가?
-// 현재 가지고 있는 정보는 P2L table, L2P talbe, open Blk에 대한 정보.
-// 이것들만 가지고 어떻게 빠르게 valid page가 가장 적은 block을 찾을 수 있을까?
-// L2P는 블락이 아무렇게나 되어있기 때문에 얘를 가지고 valid page를 보려면 결국 다 돌아야함(한 블럭을 보더라도! random write면..ㅠ).
-// P2L은 블럭 순서대로 되어 있어서 편하긴한데 어쨌든 얘도 다 돌긴 돌아야 함. 전체를 비교해야 하니까.. 그리고 L2P랑 대조도 해봐야 하고.
-// 그래도 P2L로 보는게 제일 나은 듯. openBlk은 block 하나짜리 알아봐야 뭐 사실상 쓸모가 없고.
-
-// 그럼 G.C.를 부를 때 P2L을 0~1023, 1024~2047 이렇게 하나하나씩 valid page 갯수를 다 센 뒤, 가장 적은 페이지를 victim으로 정하자.
-// 그러면 valid cnt가 없어도 됨. 나머지 부분은 지금처럼 해도 될 듯?
-
-// 아 잠시 근데 unfreeblock list가 있음. 여기서 block number들을 다 뽑을 수 있으니 얘네 중에서만 최소를 구하면 될 듯?
-
-// 멘토님이 말씀하신 bit mapping은 뭘까. valid면 1, invalid면 0으로 하는 건 알겠는데 문제는 그걸 어디에 쓰느냐.. 남는 비트가 있어야 하는데 L2P나 P2L이나 1의 자리까지 다 쓰기 때문에 불가능함.
-
-// 일단 그러면 위에 방법처럼 해볼까?
+// G.C. 새로바꾼 victim 선정방식 잘 되는지 검사.

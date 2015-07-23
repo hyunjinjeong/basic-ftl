@@ -24,7 +24,7 @@ typedef struct _List { // struct doubly-linked list
 List *freeBlkList = NULL; // free block들의 리스트
 List *unfreeBlkList = NULL; // unfree block들의 리스트
 Node *openBlk = NULL; // 현재 open 되어있는 block.
-int L2P[1024*2098]; // 총 블락이 2048개, 블락당 페이지가 1024개.. 하나당 4Byte이므로 table의 크기는 총 크기는 8MB. Logical -> Physical임. 나머지 50개는 overflow division 영역!
+int L2P[1024*2098]; // 총 블락이 2098개, 블락당 페이지가 1024개.. 하나당 4Byte이므로 table의 크기는 총 크기는 8MB. Logical -> Physical임. 나머지 50개는 overflow division 영역!
 int P2L[1024*2098]; // Physical->Logical. 블럭, 페이지는 순서대로. 0~1023번은 슈퍼블락0번, 1024~2047은 슈퍼블락1번..
 
 //
@@ -162,16 +162,16 @@ Node *remove_node(List *L, Node *N) { // list의 원하는 node를 삭제
 void GarbageCollection() { 
 	int i;
 	int tempValidCnt;
-	int victimValidCnt = 0;
+	int victimValidCnt;
 	printf("Garbage Collection request\n");
-	scanf("%d", &i);
 	
 	while(freeBlkList->cnt < 40) { // free block이 40개가 될 때까지 Garbage Collection 수행.
 		Node *N = unfreeBlkList->head;
 		Node *victim = N;
+		victimValidCnt = 0;
 
 		// victimValidCnt 초기화. 처음엔 victim을 head로 설정해 줌.
-		for(i = 0; i < 1024; i++) {
+		for(i = N->blkNumber*1024; i < N->blkNumber*1024 + 1024; i++) {
 			if(P2L[i] != -1) {
 				if(L2P[P2L[i]] == i) {
 					victimValidCnt++;
@@ -198,6 +198,11 @@ void GarbageCollection() {
 		
 		printf("[G.C.] Victim block is (superBlock %d), and the number of valid page is %d\n", victim->blkNumber, victimValidCnt);
 
+		if(victimValidCnt == 1024) { // victim block의 valid page 수가 1024면, 모든 블락이 꽉 차있다는 뜻이므로 G.C.를 할 수가 없음. 따라서 return.
+			printf("[G.C.] All block is full.\n\n");
+			return;
+		}
+
 		if(victimValidCnt > 0) { // 모든 page가 invalid인 경우 바로 free block으로 넘어가야 함.
 			for(i = 1024*(victim->blkNumber); i < 1024+1024*(victim->blkNumber); i++) { // victim block의 페이지 전체를 다 돌면서 맵핑을 옮겨줌.
 				if(openBlk->pageCnt == 1024) { // block이 꽉 차면 다음 블락으로 넘어감.
@@ -206,7 +211,7 @@ void GarbageCollection() {
 				}
 
 				if(openBlk == NULL) { // 더 이상 free block이 없을 경우.
-					printf("[G.C.] There is no free block..\n");
+					printf("[G.C.] There is no free block..\n\n");
 					return;
 				}
 		
@@ -245,20 +250,22 @@ void Erase(int startAddr, int endAddr) {
 
 	printf("Erase request to address 0x%x-0x%x\n", startAddr, endAddr);
 
-	if(startAddr >= pageSize*1024*2048 || endAddr >= pageSize*1024*2048) {
+	if(startAddr >= pageSize*1024*2098 || endAddr >= pageSize*1024*2098) {
 		printf("Error: User cannot access this address\n");
 		return;
 	}
 
 	if(mapsAddr == mapeAddr) { // 한 페이지만 지울 경우.
 		if(L2P[mapsAddr] == 0xFFFFFFFF) { // L2P mapping이 없는 상태인 경우.
-			for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // open block에서 Erase할 P2L 맵핑이 있는 지 찾아봄.
-				if(P2L[i] == mapsAddr) { // 만약 맞는 맵핑이 있으면 -1로 P2L을 invalid하게 만들어줌.
-					P2L[i] = -1;
+			if(openBlk != NULL) {
+				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // open block에서 Erase할 P2L 맵핑이 있는 지 찾아봄.
+					if(P2L[i] == mapsAddr) { // 만약 맞는 맵핑이 있으면 -1로 P2L을 invalid하게 만들어줌.
+						P2L[i] = -1;
+					}
 				}
 			}
 		}
-		else { // L2P 맵핑이 있는 경우는 open block이 아닌 다른 블락에서 L2P가 valid라는 뜻.
+		else { // L2P 맵핑이 있는 경우는 L2P가 valid라는 뜻.
 			L2P[mapsAddr] = 0xFFFFFFFF;
 		}
 		printf("[ERASE] Now L2P[%d] is invalid\n\n", mapsAddr);
@@ -267,15 +274,17 @@ void Erase(int startAddr, int endAddr) {
 		int i;
 
 		for(i = mapsAddr; i <= mapeAddr; i++) {
-			if(L2P[mapsAddr] == 0xFFFFFFFF) { // L2P mapping이 없는 상태인 경우.
-				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // open block에서 Erase할 P2L 맵핑이 있는 지 찾아봄.
-					if(P2L[i] == mapsAddr) { // 만약 맞는 맵핑이 있으면 -1로 P2L을 invalid하게 만들어줌.
-						P2L[i] = -1;
+			if(L2P[i] == 0xFFFFFFFF) { // L2P mapping이 없는 상태인 경우.
+				if(openBlk != NULL) {
+					for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // open block에서 Erase할 P2L 맵핑이 있는 지 찾아봄.
+						if(P2L[i] == mapsAddr) { // 만약 맞는 맵핑이 있으면 -1로 P2L을 invalid하게 만들어줌.
+							P2L[i] = -1;
+						}
 					}
 				}
 			}
 			else { // L2P 맵핑이 있는 경우는 open block이 아닌 다른 블락에서 L2P가 valid라는 뜻.
-				L2P[mapsAddr] = 0xFFFFFFFF;
+				L2P[i] = 0xFFFFFFFF;
 			}
 				printf("[ERASE] Now L2P[%d] is invalid\n", i);
 		}
@@ -293,7 +302,7 @@ void Read(int startAddr, int chunk) { // Logical Address와 크기를 받아 맵핑정보�
 	if(chunk > 0)
 		chunk--;
 
-	if(startAddr+chunk >= pageSize*1024*2048) {
+	if(startAddr+chunk >= pageSize*1024*2098) {
 		printf("Error: User cannot access this address.\n");
 		return;
 	}
@@ -312,8 +321,22 @@ void Read(int startAddr, int chunk) { // Logical Address와 크기를 받아 맵핑정보�
 				printf("[READ] L2P[%d] is invalid\n", mapAddr);
 			}
 		}
-		else
-			printf("[READ] L2P[%d] (superBlock %d, superPage %d)\n", mapAddr, L2P[mapAddr]/1024, L2P[mapAddr]%1024);
+		else {
+			// 이 경우에는 이전 block에 L2P가 쓰여져 있는 상태에서 현재 open block에서 똑같은 L2P에 맵핑이 되면,
+			// 현재 open block이 L2P가 쓰여지지 않기 때문에 read를 하면 이전 L2P 정보가 나오게 됨. 따라서 따로 처리 필요
+			if(openBlk != NULL) {
+				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { 
+					if(P2L[i] == mapAddr) {
+						printf("[READ] L2P[%d] (superBlock %d, superPage %d)\n", mapAddr, i/1024, i%1024);
+						cnt++;
+					}
+				}
+			}
+			if(cnt == 0) {
+				printf("[READ] L2P[%d] (superBlock %d, superPage %d)\n", mapAddr, L2P[mapAddr]/1024, L2P[mapAddr]%1024);
+			}
+			
+		}
 	}
 	else { // 여러 페이지를 읽어야 할 경우.
 		int chunkNumber = (startAddr+chunk)/pageSize - mapAddr;
@@ -335,8 +358,21 @@ void Read(int startAddr, int chunk) { // Logical Address와 크기를 받아 맵핑정보�
 					printf("[READ] L2P[%d] is invalid\n", mapAddr);
 				}
 			}
-			else
-				printf("[READ] L2P[%d] (superBlock %d, superPage %d)\n", mapAddr, L2P[mapAddr]/1024, L2P[mapAddr]%1024);
+			else {
+				// 이 경우에는 이전 block에 L2P가 쓰여져 있는 상태에서 현재 open block에서 똑같은 L2P에 맵핑이 되면,
+				// 현재 open block이 L2P가 쓰여지지 않기 때문에 read를 하면 이전 L2P 정보가 나오게 됨. 따라서 따로 처리 필요
+				if(openBlk != NULL) {
+					for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { 
+						if(P2L[i] == mapAddr) {
+							printf("[READ] L2P[%d] (superBlock %d, superPage %d)\n", mapAddr, i/1024, i%1024);
+							cnt++;
+						}
+					}
+				}
+				if(cnt == 0) {
+					printf("[READ] L2P[%d] (superBlock %d, superPage %d)\n", mapAddr, L2P[mapAddr]/1024, L2P[mapAddr]%1024);
+				}
+			}
 			
 			mapAddr++;
 			chunkNumber--;
@@ -357,7 +393,7 @@ void Write(int startAddr, int chunk) {
 	if(chunk > 0)
 		chunk--;
 
-	if(startAddr+chunk >= pageSize*1024*2048) { // block 2048부터는 overflow division이므로 user가 접근 불가.
+	if(startAddr+chunk >= pageSize*1024*2098) { // block 2098부터는 overflow division이므로 user가 접근 불가.
 		printf("Error: User cannot access this address.\n");
 		return;
 	}
@@ -374,6 +410,7 @@ void Write(int startAddr, int chunk) {
 			}
 			
 			P2L[openBlk->pageCnt + 1024*openBlk->blkNumber] = mapAddr;
+			printf("[WRITE] Write to L2P[%d] (superBlock %d, superPage %d)\n\n", mapAddr, openBlk->blkNumber, openBlk->pageCnt);
 
 			for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + openBlk->pageCnt; i++) { // open block에서 중복이 생기면 L2P가 invalid한 상태로 겹칠 수가 있음.
 				if(P2L[i] == P2L[openBlk->pageCnt + 1024*openBlk->blkNumber]) {
@@ -385,9 +422,8 @@ void Write(int startAddr, int chunk) {
 
 			if(openBlk->pageCnt == 1024) { // openBlk이 꽉 찬경우.
 				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // 블럭을 다 돌면서 L2P를 써줌
-					if(P2L[i] != -1) {
+					if(P2L[i] != -1) { // P2L이 valid하면 L2P에 써줌.
 						L2P[P2L[i]] = i;
-						printf("[WRITE] Write to L2P[%d] (superBlock %d, superPage %d)\n", P2L[i], L2P[P2L[i]]/1024, L2P[P2L[i]]%1024);
 					}
 				}
 
@@ -412,7 +448,8 @@ void Write(int startAddr, int chunk) {
 				}
 
 				P2L[openBlk->pageCnt + 1024*openBlk->blkNumber] = mapAddr;
-				
+				printf("[WRITE] Write to L2P[%d] (superBlock %d, superPage %d)\n", mapAddr, openBlk->blkNumber, openBlk->pageCnt);
+
 				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + openBlk->pageCnt; i++) { // open block에서 중복이 생기면 L2P가 invalid한 상태로 겹칠 수가 있음.
 					if(P2L[i] == P2L[openBlk->pageCnt + 1024*openBlk->blkNumber]) {
 						P2L[i] = -1; // 그런 경우 기존의 P2L을 invalid로8 만들어 줘야 read에서 중복이 생기지 않음.
@@ -428,7 +465,6 @@ void Write(int startAddr, int chunk) {
 					for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // 블럭을 다 돌면서 L2P를 써줌
 						if(P2L[i] != -1) {
 							L2P[P2L[i]] = i;
-							printf("[WRITE] Write to L2P[%d] (superBlock %d, superPage %d)\n", P2L[i], L2P[P2L[i]]/1024, L2P[P2L[i]]%1024);
 						}
 					}
 					
@@ -440,6 +476,7 @@ void Write(int startAddr, int chunk) {
 						GarbageCollection();
 				}
 			}
+			printf("\n");
 		}
 	}
 	else { // misaligned case의 경우 read-back을 한 다음 새로 mapping을 해야 함.
@@ -449,7 +486,8 @@ void Write(int startAddr, int chunk) {
 
 		if(mapAddr == (startAddr+chunk)/pageSize) { // 한 페이지만 쓸 경우, 그냥 read-back 후 write.
 			P2L[openBlk->pageCnt + 1024*openBlk->blkNumber] = mapAddr;
-			
+			printf("[WRITE] Write to L2P[%d] (superBlock %d, superPage %d)\n\n", mapAddr, openBlk->blkNumber, openBlk->pageCnt);
+
 			for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + openBlk->pageCnt; i++) { // open block에서 중복이 생기면 L2P가 invalid한 상태로 겹칠 수가 있음.
 				if(P2L[i] == P2L[openBlk->pageCnt + 1024*openBlk->blkNumber]) {
 					P2L[i] = -1; // 그런 경우 기존의 P2L을 invalid로 만들어 줘야 read에서 중복이 생기지 않음.
@@ -462,7 +500,6 @@ void Write(int startAddr, int chunk) {
 				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // 블럭을 다 돌면서 L2P를 써줌
 					if(P2L[i] != -1) {
 						L2P[P2L[i]] = i;
-						printf("[WRITE] Write to L2P[%d] (superBlock %d, superPage %d)\n", P2L[i], L2P[P2L[i]]/1024, L2P[P2L[i]]%1024);
 					}
 				}
 				add_list_tail_node(unfreeBlkList, openBlk);
@@ -482,7 +519,8 @@ void Write(int startAddr, int chunk) {
 				}
 
 				P2L[openBlk->pageCnt + 1024*openBlk->blkNumber] = mapAddr;
-				
+				printf("[WRITE] Write to L2P[%d] (superBlock %d, superPage %d)\n", mapAddr, openBlk->blkNumber, openBlk->pageCnt);
+
 				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + openBlk->pageCnt; i++) { // open block에서 중복이 생기면 L2P가 invalid한 상태로 겹칠 수가 있음.
 					if(P2L[i] == P2L[openBlk->pageCnt + 1024*openBlk->blkNumber]) {
 						P2L[i] = -1; // 그런 경우 기존의 P2L을 invalid로 만들어 줘야 read에서 중복이 생기지 않음.
@@ -497,7 +535,6 @@ void Write(int startAddr, int chunk) {
 					for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // 블럭을 다 돌면서 L2P를 써줌
 						if(P2L[i] != -1) {
 							L2P[P2L[i]] = i;
-							printf("[WRITE] Write to L2P[%d] (superBlock %d, superPage %d)\n", P2L[i], L2P[P2L[i]]/1024, L2P[P2L[i]]%1024);
 						}
 					}
 					
@@ -510,17 +547,17 @@ void Write(int startAddr, int chunk) {
 						GarbageCollection();
 				}
 			}
+			printf("\n");
 		}
 	}
 }
 
 int main() {
-	int i;
-	Node *tmp;
+	int i, k;
 	freeBlkList = create_list();
 	unfreeBlkList = create_list();
 
-	for( i = 0; i < 2098; i++ ) { //superblk의 크기는 16MB이고 flash의 크기는 32GB이므로 block이 총 2048개 필요함. overflow가 났을 때를 대비한 overflow division block이 50개 있음.
+	for( i = 0; i < 2098; i++ ) { //superblk의 크기는 16MB이고 flash의 크기는 32GB이므로 block이 총 2098개 필요함. overflow가 났을 때를 대비한 overflow division block이 50개 있음.
 		add_list_tail(freeBlkList, i);
 	}
 
@@ -533,18 +570,42 @@ int main() {
 	// test 공간. 유저는 0~2047까지의 block만 접근 가능.
 	//
 
-	Write(0, pageSize*1024*2048);
-	Write(pageSize*1024*18, pageSize*1024*30);
-	
+	// pageSize = 32, pageSize*1024(1 block 크기): 32768, pageSize*1024*2048(전체 block 크기): 67108864
 
-	
-	tmp = freeBlkList -> head;
-	while(tmp != NULL) {
-		printf("block %d is free\n", tmp->blkNumber);
-		tmp = tmp->next;
+	while(1) {
+		printf("1 page size is 32(LBA), 1 block has 1024 page, and the number of block is 2048\n");
+		printf("1. Write, 2. Read, 3. Erase\n");
+		printf("If you want to quit, enter '0'\n: ");
+		scanf_s("%d", &k, 1);
+
+		if(k == 0) {
+			return 0;
+		}
+		else if(k == 1) {
+			int a, b;
+			printf("\nWrite(startAddr, chunkSize): ");
+			scanf_s("%d", &a, 1);
+			scanf_s("%d", &b, 1);
+			Write(a, b);
+		}
+		else if(k == 2) {
+			int a, b;
+			printf("\nRead(startAddr, chunkSize): ");
+			scanf_s("%d", &a, 1);
+			scanf_s("%d", &b, 1);
+			Read(a, b);
+		}
+		else if(k == 3) {
+			int a, b;
+			printf("\nErase(startAddr, endAddr): ");
+			scanf_s("%d", &a, 1);
+			scanf_s("%d", &b, 1);
+			Erase(a, b);
+		}
+		else {
+			printf("The number has to be 0-3.\n\n");
+		}
 	}
 	
 	return 0;
 }
-
-// G.C. 새로바꾼 victim 선정방식 잘 되는지 검사.

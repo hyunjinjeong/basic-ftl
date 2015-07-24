@@ -246,7 +246,7 @@ void GarbageCollection() {
 void Erase(int startAddr, int endAddr) {
 	int mapsAddr = startAddr/pageSize;
 	int mapeAddr = endAddr/pageSize;
-	int i;
+	int i, j;
 
 	printf("Erase request to address 0x%x-0x%x\n", startAddr, endAddr);
 
@@ -271,14 +271,12 @@ void Erase(int startAddr, int endAddr) {
 		printf("[ERASE] Now L2P[%d] is invalid\n\n", mapsAddr);
 	}
 	else { // 여러 페이지를 지워야 할 경우
-		int i;
-
 		for(i = mapsAddr; i <= mapeAddr; i++) {
 			if(L2P[i] == 0xFFFFFFFF) { // L2P mapping이 없는 상태인 경우.
 				if(openBlk != NULL) {
-					for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + 1024; i++) { // open block에서 Erase할 P2L 맵핑이 있는 지 찾아봄.
-						if(P2L[i] == mapsAddr) { // 만약 맞는 맵핑이 있으면 -1로 P2L을 invalid하게 만들어줌.
-							P2L[i] = -1;
+					for(j = openBlk->blkNumber*1024; j < openBlk->blkNumber*1024 + 1024; j++) { // open block에서 Erase할 P2L 맵핑이 있는 지 찾아봄.
+						if(P2L[j] == i) { // 만약 맞는 맵핑이 있으면 -1로 P2L을 invalid하게 만들어줌.
+							P2L[j] = -1;
 						}
 					}
 				}
@@ -286,7 +284,7 @@ void Erase(int startAddr, int endAddr) {
 			else { // L2P 맵핑이 있는 경우는 open block이 아닌 다른 블락에서 L2P가 valid라는 뜻.
 				L2P[i] = 0xFFFFFFFF;
 			}
-				printf("[ERASE] Now L2P[%d] is invalid\n", i);
+			printf("[ERASE] Now L2P[%d] is invalid\n", i);
 		}
 		printf("\n");
 	}
@@ -404,9 +402,17 @@ void Write(int startAddr, int chunk) {
 	
 	if((startAddr % pageSize) == 0) { // well aligned case.
 		if(chunk < pageSize) { // chunk가 페이지 사이즈보다 같거나 작은 경우 그 페이지에 모두 쓸 수 있음.
-			if(L2P[mapAddr] != 0xFFFFFFFF) { // 기존 mapping이 있는 경우 read-back.
+			if(L2P[mapAddr] != 0xFFFFFFFF) { // 기존 mapping이 있는 경우 read-back. 
 				printf("[WRITE] Read-back\n");
 				Read(startAddr, pageSize);
+			}
+			else { // 현재 open block에서 overwrite가 발생할 경우, L2P 맵핑은 없지만 P2L은 있으므로 read-back을 따로 처리..
+				for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + openBlk->pageCnt; i++) {
+					if(P2L[i] == mapAddr) {
+						printf("[WRITE] Read-back\n");
+						Read(startAddr, pageSize);
+					}
+				}
 			}
 			
 			P2L[openBlk->pageCnt + 1024*openBlk->blkNumber] = mapAddr;
@@ -444,6 +450,14 @@ void Write(int startAddr, int chunk) {
 					if(chunkNumber == 0) { // 여러 페이지를 쓸 때 마지막에 mapping이 있는 경우 read-back.
 						printf("[WRITE] Read-back\n");
 						Read(startAddr+cnt*pageSize, pageSize);
+					}
+				}
+				else { // 현재 open block에서 overwrite가 발생할 경우, L2P 맵핑은 없지만 P2L은 있으므로 read-back을 따로 처리..
+					for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + openBlk->pageCnt; i++) {
+						if(P2L[i] == mapAddr && (chunkNumber == 0 || cnt == 0)) {
+							printf("[WRITE] Read-back\n");
+							Read(startAddr+cnt*pageSize, pageSize);
+						}
 					}
 				}
 
@@ -517,6 +531,14 @@ void Write(int startAddr, int chunk) {
 						Read(mapAddr*pageSize, pageSize);
 					}
 				}
+				else { // 현재 open block에서 overwrite가 발생할 경우, L2P 맵핑은 없지만 P2L은 있으므로 read-back을 따로 처리..
+					for(i = openBlk->blkNumber*1024; i < openBlk->blkNumber*1024 + openBlk->pageCnt; i++) {
+						if(P2L[i] == mapAddr && chunkNumber == 0) {
+							printf("[WRITE] Read-back\n");
+							Read(mapAddr*pageSize, pageSize);
+						}
+					}
+				}
 
 				P2L[openBlk->pageCnt + 1024*openBlk->blkNumber] = mapAddr;
 				printf("[WRITE] Write to L2P[%d] (superBlock %d, superPage %d)\n", mapAddr, openBlk->blkNumber, openBlk->pageCnt);
@@ -574,7 +596,7 @@ int main() {
 
 	while(1) {
 		printf("1 page size is 32(LBA), 1 block has 1024 page, and the number of block is 2048\n");
-		printf("1. Write, 2. Read, 3. Erase\n");
+		printf("1. Write, 2. Read, 3. Erase / ");
 		printf("If you want to quit, enter '0'\n: ");
 		scanf_s("%d", &k, 1);
 

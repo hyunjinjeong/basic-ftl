@@ -250,7 +250,7 @@ void Erase(int startAddr, int endAddr) {
 
 	printf("Erase request to address 0x%x-0x%x\n", startAddr, endAddr);
 
-	if(startAddr >= pageSize*1024*2098 || endAddr >= pageSize*1024*2098) {
+	if(startAddr >= pageSize*1024*2048 || endAddr >= pageSize*1024*2048) {
 		printf("Error: User cannot access this address\n");
 		return;
 	}
@@ -300,7 +300,7 @@ void Read(int startAddr, int chunk) { // Logical Address와 크기를 받아 맵핑정보�
 	if(chunk > 0)
 		chunk--;
 
-	if(startAddr+chunk >= pageSize*1024*2098) {
+	if(startAddr+chunk >= pageSize*1024*2048) {
 		printf("Error: User cannot access this address.\n");
 		return;
 	}
@@ -391,7 +391,7 @@ void Write(int startAddr, int chunk) {
 	if(chunk > 0)
 		chunk--;
 
-	if(startAddr+chunk >= pageSize*1024*2098) { // block 2098부터는 overflow division이므로 user가 접근 불가.
+	if(startAddr+chunk >= pageSize*1024*2048) { // block 2048부터는 overflow division이므로 user가 접근 불가.
 		printf("Error: User cannot access this address.\n");
 		return;
 	}

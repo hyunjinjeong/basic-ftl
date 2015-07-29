@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-
 // Macros, structures, global variables
 
 #define pageSize 32 // 32 LBA(1 LBA의 크기는 512Byte)가 하나의 페이지를 차지함.
@@ -19,7 +18,6 @@ typedef struct _List { // struct doubly-linked list
 	Node *head;
 	Node *tail;
 } List;
-
 
 List *freeBlkList = NULL; // free block들의 리스트
 List *unfreeBlkList = NULL; // unfree block들의 리스트
@@ -145,14 +143,12 @@ Node *remove_node(List *L, Node *N) { // list의 원하는 node를 삭제
 // End List
 //
 
-
 // Write는 well align, misalign으로 나누고 각각 케이스에서 1 페이지만 쓰는 경우, 여러 페이지를 쓰는 경우로 나눔.
 // 이미 쓰여진 mapping이 있으면 기본적으로 위의 경우와 비슷하나 다른 점은 read-back 후 overwrite.
 // misalign의 경우는 첫 페이지를 read-back을 한 뒤, mapping을 덮어 씌움.
 // 다만 write를 할 때, P2L만 실시간으로 업데이트하고 L2P table은 한 블럭이 꽉 찼을 때 한꺼번에 업데이트함.
 
 // Read는 한 페이지를 읽는 경우, 여러 페이지를 읽는 경우로 나눔.
-
 // Erase는 요청한 페이지의 맵핑을 invalid로 만듬(0xFFFFFFFF). 마찬가지로 한 페이지를 erase하는 경우, 여러 페이지를 erase하는 경우로 나뉘어짐.
 
 // Garbage Collection은 free block의 수가 20개 이하일 때 실행해서 40개가 될 때까지 실행한다.
@@ -241,7 +237,6 @@ void GarbageCollection() {
 	}
 	printf("\n");
 }
-
 
 void Erase(int startAddr, int endAddr) {
 	int mapsAddr = startAddr/pageSize;
